@@ -15,10 +15,12 @@ This is a minimal Helm chart for deploying the TREK app.
 A hosted Helm repository is available:
 
 ```sh
-helm repo add trek https://mauriceboe.github.io/TREK
+helm repo add trek https://chart.liketrek.com
 helm repo update
 helm install trek trek/trek
 ```
+
+> **Note:** `chart.liketrek.com` is a custom domain (CNAME) for the GitHub Pages site at `https://liketrek.github.io/TREK` — both URLs serve the same repository. The github.io URL keeps working (it redirects to `chart.liketrek.com`), but the custom domain is the canonical one to use.
 
 ## Usage
 
@@ -39,7 +41,9 @@ See `values.yaml` for more options.
 
 ## Notes
 - Ingress is off by default. Enable and configure hosts for your domain.
-- PVCs require a default StorageClass or specify one as needed.
+- PVCs use the cluster's default StorageClass. Set `persistence.data.storageClassName` and/or `persistence.uploads.storageClassName` to bind a specific class.
+- To use your own PVCs, set `persistence.data.existingClaim` and/or `persistence.uploads.existingClaim`. The other values for that volume (size, storageClassName, annotations) are then ignored.
+- With `persistence.enabled: false`, the data and uploads volumes use an `emptyDir` — storage is ephemeral and lost on pod restart. Intended for testing only.
 - `JWT_SECRET` is managed entirely by the server — auto-generated into the data PVC on first start and rotatable via the admin panel (Settings → Danger Zone). No Helm configuration needed.
 - `ENCRYPTION_KEY` encrypts stored secrets (API keys, MFA, SMTP, OIDC) at rest. Recommended: set via `secretEnv.ENCRYPTION_KEY` or `existingSecret`. If left empty, the server falls back automatically: existing installs use `data/.jwt_secret` (no action needed on upgrade); fresh installs auto-generate a key persisted to the data PVC.
 - If using ingress, you must manually keep `env.ALLOWED_ORIGINS` and `ingress.hosts` in sync to ensure CORS works correctly. The chart does not sync these automatically.

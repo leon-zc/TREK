@@ -1,7 +1,8 @@
 import path from 'path';
+import { avatarUrl } from './avatarUrl';
 import fs from 'fs';
 import type { Request } from 'express';
-import { db, canAccessTrip } from '../db/database';
+import { db } from '../db/database';
 import { consumeEphemeralToken } from './ephemeralTokens';
 import { verifyJwtAndLoadUser } from '../middleware/auth';
 import { TripFile } from '../types';
@@ -11,7 +12,22 @@ import { TripFile } from '../types';
 // ---------------------------------------------------------------------------
 
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-export const DEFAULT_ALLOWED_EXTENSIONS = 'jpg,jpeg,png,gif,webp,heic,pdf,doc,docx,xls,xlsx,txt,csv,pkpass';
+export const DEFAULT_ALLOWED_EXTENSIONS = 'jpg,jpeg,png,gif,webp,heic,pdf,doc,docx,xls,xlsx,txt,csv,pkpass,pkpasses,md,markdown';
+
+// Video support (#823). Gallery/media uploads accept these in addition to images,
+// independent of the admin doc-types allowlist. Videos are stored as-is and
+// streamed with HTTP Range; the cap is higher than images because phone clips are
+// large.
+export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'webm', 'mov'];
+export const MAX_VIDEO_SIZE = 500 * 1024 * 1024; // 500 MB
+
+export function isVideoMime(mime: string | undefined | null): boolean {
+  return !!mime && mime.startsWith('video/');
+}
+
+export function isVideoExtension(ext: string): boolean {
+  return VIDEO_EXTENSIONS.includes(ext.toLowerCase().replace(/^\./, ''));
+}
 // Single authoritative blocklist for every file-upload surface (main
 // file manager + collab attachments). When the admin setting
 // `allowed_file_types` is `*`, this list is still enforced so the
@@ -30,9 +46,7 @@ export const filesDir = path.join(__dirname, '../../uploads/files');
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function verifyTripAccess(tripId: string | number, userId: number) {
-  return canAccessTrip(tripId, userId);
-}
+export { verifyTripAccess } from './tripAccess';
 
 export function getAllowedExtensions(): string {
   try {
@@ -48,13 +62,41 @@ const FILE_SELECT = `
   LEFT JOIN users u ON f.uploaded_by = u.id
 `;
 
-export function formatFile(file: TripFile & { trip_id?: number }) {
+export function formatFile(file: TripFile & { trip_id?: number; uploaded_by_avatar?: string | null }) {
   const tripId = file.trip_id;
   return {
     ...file,
     url: `/api/trips/${tripId}/files/${file.id}/download`,
-    uploaded_by_avatar: file.uploaded_by_avatar ? `/uploads/avatars/${file.uploaded_by_avatar}` : null,
+    uploaded_by_avatar: avatarUrl({ avatar: file.uploaded_by_avatar }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Trip-scoped link validation
+// ---------------------------------------------------------------------------
+
+/**
+ * A file, and any reservation / day-assignment / place it points at, must all
+ * live in the same trip. FILE_SELECT and getFileLinks join the reservation and
+ * return its title, so without this guard a member of trip A could aim a file
+ * (or a file_link) at trip B's reservation id and read the title back. Returns
+ * the first field that escapes `tripId`, or null when every supplied id belongs
+ * to the trip. Absent / null / zero ids are ignored (they clear the link).
+ */
+export function findForeignLinkTarget(
+  tripId: string | number,
+  opts: { reservation_id?: string | number | null; assignment_id?: string | number | null; place_id?: string | number | null }
+): 'reservation_id' | 'assignment_id' | 'place_id' | null {
+  if (opts.reservation_id && !db.prepare('SELECT 1 FROM reservations WHERE id = ? AND trip_id = ?').get(opts.reservation_id, tripId)) {
+    return 'reservation_id';
+  }
+  if (opts.place_id && !db.prepare('SELECT 1 FROM places WHERE id = ? AND trip_id = ?').get(opts.place_id, tripId)) {
+    return 'place_id';
+  }
+  if (opts.assignment_id && !db.prepare('SELECT 1 FROM day_assignments a JOIN days d ON a.day_id = d.id WHERE a.id = ? AND d.trip_id = ?').get(opts.assignment_id, tripId)) {
+    return 'assignment_id';
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,10 +155,6 @@ export function getFileById(id: string | number, tripId: string | number): TripF
   return db.prepare('SELECT * FROM trip_files WHERE id = ? AND trip_id = ?').get(id, tripId) as TripFile | undefined;
 }
 
-export function getFileByIdFull(id: string | number): TripFile {
-  return db.prepare(`${FILE_SELECT} WHERE f.id = ?`).get(id) as TripFile;
-}
-
 export function getDeletedFile(id: string | number, tripId: string | number): TripFile | undefined {
   return db.prepare('SELECT * FROM trip_files WHERE id = ? AND trip_id = ? AND deleted_at IS NOT NULL').get(id, tripId) as TripFile | undefined;
 }
@@ -126,7 +164,7 @@ export function listFiles(tripId: string | number, showTrash: boolean) {
   const files = db.prepare(`${FILE_SELECT} WHERE ${where} ORDER BY f.starred DESC, f.created_at DESC`).all(tripId) as TripFile[];
 
   const fileIds = files.map(f => f.id);
-  let linksMap: Record<number, FileLink[]> = {};
+  const linksMap: Record<number, FileLink[]> = {};
   if (fileIds.length > 0) {
     const placeholders = fileIds.map(() => '?').join(',');
     const links = db.prepare(`SELECT file_id, reservation_id, place_id FROM file_links WHERE file_id IN (${placeholders})`).all(...fileIds) as FileLink[];

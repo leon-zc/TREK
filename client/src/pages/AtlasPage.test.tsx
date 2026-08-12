@@ -175,6 +175,9 @@ function useDefaultAtlasHandlers() {
     http.get('/api/addons/atlas/stats', () => HttpResponse.json(atlasStatsResponse)),
     http.get('/api/addons/atlas/bucket-list', () => HttpResponse.json({ items: [] })),
     http.get('/api/addons/atlas/regions', () => HttpResponse.json({ regions: {} })),
+    // Country-border GeoJSON (admin-0) — served by the API now. Tests that need real
+    // country features override this handler via server.use(...).
+    http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json({ type: 'FeatureCollection', features: [] })),
     // Handler for region GeoJSON fetch (triggered by loadRegionsForViewport when intersects=true)
     http.get('/api/addons/atlas/regions/geo', () => HttpResponse.json({ features: [] })),
   );
@@ -186,18 +189,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   seedStore(useAuthStore, { isAuthenticated: true, user: buildUser() });
   seedStore(useSettingsStore, { settings: buildSettings({ dark_mode: false }) });
-
-  // Stub the external GeoJSON fetch (GitHub raw URL) to avoid real network calls
-  vi.spyOn(global, 'fetch').mockImplementation((url) => {
-    const urlStr = String(url);
-    if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ type: 'FeatureCollection', features: [] }),
-      } as Response);
-    }
-    return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-  });
 
   useDefaultAtlasHandlers();
 });
@@ -469,16 +460,9 @@ describe('AtlasPage', () => {
   describe('FE-PAGE-ATLAS-017: country search filters options from GeoJSON', () => {
     it('typing in search updates the input value', async () => {
       // Override fetch to return GeoJSON with FR feature
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -519,16 +503,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-019: confirm popup shows via Enter on search with GeoJSON', () => {
     it('pressing Enter in search with matching GeoJSON result triggers confirm popup', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
@@ -600,16 +577,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-022: confirm popup for bucket type shows month/year selects', () => {
     it('selecting Add to bucket list in confirm popup shows month/year pickers', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -642,16 +612,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-031: confirm popup opens and mark-visited action works', () => {
     it('opens confirm popup via search and clicking Mark as visited closes it', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
@@ -710,16 +673,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-032: confirm popup Add to Bucket opens bucket type', () => {
     it('clicking Add to bucket list in choose popup switches to bucket type', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -851,16 +807,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-029: confirm popup opens via search dropdown click', () => {
     it('clicking a country in the search dropdown opens the confirm action popup', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
@@ -914,16 +863,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-030: confirm popup overlay click closes it', () => {
     it('clicking the overlay backdrop closes the confirm popup', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({
-            ok: true,
-            json: () => Promise.resolve(geoJsonWithFR),
-          } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -1000,13 +942,9 @@ describe('AtlasPage', () => {
           { type: 'Feature', properties: { ISO_A2: 'DE', ADM0_A3: 'DEU', ISO_A3: 'DEU', NAME: 'Germany', ADMIN: 'Germany' }, geometry: null },
         ],
       };
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonFRandDE) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonFRandDE)),
+      );
 
       render(<AtlasPage />);
 
@@ -1023,13 +961,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-034: dropdown button click + mouse events', () => {
     it('clicking France dropdown button covers onClick and mouse event handlers', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithFR) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
@@ -1100,13 +1034,9 @@ describe('AtlasPage', () => {
         http.get('/api/addons/atlas/stats', () => HttpResponse.json(emptyAtlasResponse)),
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
       );
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithFR) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -1158,13 +1088,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-036: bucket popup submit action', () => {
     it('submits a bucket list item from the confirm popup', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithFR) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/bucket-list', () =>
@@ -1321,13 +1247,9 @@ describe('AtlasPage', () => {
           },
         ],
       };
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithXK) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithXK)),
+      );
 
       render(<AtlasPage />);
 
@@ -1345,13 +1267,9 @@ describe('AtlasPage', () => {
       { a3: 'FRA', name: 'France', query: 'france' },
       { a3: 'NOR', name: 'Norway', query: 'norway' },
     ])('returns $name in search results when GeoJSON provides ADM0_A3=$a3 but ISO_A2 is -99', async ({ a3, name, query }) => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(makeGeoJsonWithA3Fallback(a3, name)) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(makeGeoJsonWithA3Fallback(a3, name))),
+      );
 
       const user = userEvent.setup();
       render(<AtlasPage />);
@@ -1426,7 +1344,7 @@ describe('AtlasPage', () => {
 
         // Find and click the Add button (should be enabled now since bucketForm.name is set)
         const addButtons = screen.queryAllByRole('button').filter(
-          (b) => !b.disabled && (b.textContent?.trim() === 'Add' || b.textContent?.includes('Add')),
+          (b) => !(b as HTMLButtonElement).disabled && (b.textContent?.trim() === 'Add' || b.textContent?.includes('Add')),
         );
         if (addButtons.length > 0) {
           await user.click(addButtons[addButtons.length - 1]);
@@ -1459,13 +1377,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-044: direct France dropdown button click', () => {
     it('directly finds and clicks the France button in the dropdown to cover onClick', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithFR) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.post('/api/addons/atlas/country/:code/mark', () => HttpResponse.json({ success: true })),
@@ -1517,13 +1431,9 @@ describe('AtlasPage', () => {
 
   describe('FE-PAGE-ATLAS-045: dark mode toggle covers map re-init + loadRegionsForViewport', () => {
     it('switching to dark mode re-initializes map and covers region loading code path', async () => {
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonWithFR) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonWithFR)),
+      );
 
       server.use(
         http.get('/api/addons/atlas/regions/geo', () => HttpResponse.json({ features: [] })),
@@ -1636,13 +1546,9 @@ describe('AtlasPage', () => {
           { type: 'Feature', properties: { ISO_A2: 'IT', ADM0_A3: 'ITA', ISO_A3: 'ITA', NAME: 'Italy', ADMIN: 'Italy' }, geometry: null },
         ],
       };
-      vi.spyOn(global, 'fetch').mockImplementation((url) => {
-        const urlStr = String(url);
-        if (urlStr.includes('geojson') || urlStr.includes('githubusercontent')) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(geoJsonFRandIT) } as Response);
-        }
-        return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
-      });
+      server.use(
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json(geoJsonFRandIT)),
+      );
 
       render(<AtlasPage />);
 
@@ -1668,6 +1574,61 @@ describe('AtlasPage', () => {
       }, { timeout: 3000 }).catch(() => {});
 
       // Page is still rendered
+      expect(screen.getAllByText(/countries/i).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('FE-PAGE-ATLAS-048: clicking a visited (place-derived, not manually-marked) region opens the hide-region popup', () => {
+    it('offers to remove a region that came from real place data, not just a manually-marked one', async () => {
+      // FR keeps real tripCount/placeCount from atlasStatsResponse so the country layer's
+      // own click handler (only active for a zero-count country) stays a no-op — this test
+      // is only about the region layer. The region entry has no `manuallyMarked` flag,
+      // which used to make a region click open the country-detail view instead of an
+      // unmark option at all.
+      server.use(
+        http.get('/api/addons/atlas/regions', () => HttpResponse.json({
+          regions: { FR: [{ code: 'FR-IDF', name: 'Île-de-France', placeCount: 3 }] },
+        })),
+        http.get('/api/addons/atlas/countries/geo', () => HttpResponse.json({
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', properties: { ISO_A2: 'FR', ADM0_A3: 'FRA', ISO_A3: 'FRA', NAME: 'France', ADMIN: 'France' }, geometry: null }],
+        })),
+        http.get('/api/addons/atlas/regions/geo', () => HttpResponse.json({
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', properties: { iso_a2: 'FR', iso_3166_2: 'FR-IDF', name: 'Île-de-France', name_en: 'Île-de-France', admin: 'France' }, geometry: null }],
+        })),
+        http.delete('/api/addons/atlas/region/:code/mark', () => HttpResponse.json({ success: true })),
+      );
+
+      render(<AtlasPage />);
+
+      // Wait for initial data to load before the region layer can build (loadRegionsForViewport
+      // needs country_layer_by_a2_ref already populated, which only happens once the country
+      // layer's own effect has run) — see FE-PAGE-ATLAS-045 for the same recipe. Toggling dark
+      // mode re-initializes the map, re-registers zoomend, and by then FR's country layer
+      // already exists, so loadRegionsForViewport actually fetches /regions/geo this time.
+      await waitFor(() => {
+        expect(screen.getAllByText(/countries/i).length).toBeGreaterThan(0);
+      });
+      seedStore(useSettingsStore, { settings: buildSettings({ dark_mode: true }) });
+
+      // The layer mock immediately invokes click callbacks once the region layer is built:
+      // FR-IDF is visited (place-derived) → confirmAction becomes { type: 'unmark-region', ... }
+      await waitFor(() => {
+        expect(
+          screen.queryAllByRole('button').some((b) => b.textContent?.trim() === 'Remove'),
+        ).toBe(true);
+      }, { timeout: 5000 });
+
+      const removeBtn = screen.queryAllByRole('button').find((b) => b.textContent?.trim() === 'Remove');
+      if (removeBtn) {
+        fireEvent.click(removeBtn);
+      }
+
+      await waitFor(() => {
+        expect(screen.queryAllByRole('button').some((b) => b.textContent?.trim() === 'Remove')).toBe(false);
+      }, { timeout: 3000 }).catch(() => {});
+
       expect(screen.getAllByText(/countries/i).length).toBeGreaterThan(0);
     });
   });

@@ -13,7 +13,7 @@
 
 ## 1. Fork & Clone the Repository
 
-Go to the [TREK repository](https://github.com/mauriceboe/TREK) and click **Fork** to create your own copy.
+Go to the [TREK repository](https://github.com/liketrek/TREK) and click **Fork** to create your own copy.
 
 Then clone your fork locally:
 
@@ -30,7 +30,7 @@ cd TREK
 Add the original repository as `upstream` so you can pull in future updates:
 
 ```bash
-git remote add upstream git@github.com:mauriceboe/TREK.git
+git remote add upstream git@github.com:liketrek/TREK.git
 ```
 
 You should now have two remotes:
@@ -38,7 +38,7 @@ You should now have two remotes:
 | Remote     | URL                                          | Purpose                        |
 |------------|----------------------------------------------|--------------------------------|
 | `origin`   | `git@github.com:your-username/TREK.git`      | Your fork — push changes here  |
-| `upstream` | `git@github.com:mauriceboe/TREK.git`         | Main repo — pull updates from here |
+| `upstream` | `git@github.com:liketrek/TREK.git`         | Main repo — pull updates from here |
 
 ---
 
@@ -79,7 +79,36 @@ npm ci
 
 ---
 
-## 6. Available Scripts
+## 6. Optional: KItinerary (Booking Import)
+
+The booking-confirmation import feature uses [KDE KItinerary](https://apps.kde.org/itinerary/) to parse travel documents. The server works without it, but the import endpoint will be non-functional.
+
+### Linux
+
+```bash
+sudo apt-get install -y libkitinerary-bin
+```
+
+### Environment variables
+
+Add these to your local `.env` (or export them before starting the server):
+
+```bash
+# Required: path to the extractor binary
+KITINERARY_EXTRACTOR_PATH=/usr/local/bin/kitinerary-extractor
+
+# Prevent Qt from probing for a display in headless/server environments
+QT_QPA_PLATFORM=offscreen
+
+# KDE cache directory (avoids writing to $HOME)
+XDG_CACHE_HOME=/tmp/kf6-cache
+```
+
+You can override `KITINERARY_EXTRACTOR_PATH` if you installed the binary to a different location.
+
+---
+
+## 7. Available Scripts
 
 ### Root (`/`)
 
@@ -98,18 +127,22 @@ These commands run across all workspaces at once and are the recommended way to 
 
 ### Shared (`/shared`)
 
-The `@trek/shared` package is the single source of truth for code shared between the client and server. It currently holds **Zod schemas that define API contracts** (request/response shapes, common primitives, pagination). Both workspaces import from it so schema changes automatically propagate to both sides.
+The `@trek/shared` package is the single source of truth for code shared between the client and server. It holds the **Zod schemas that define the API contracts** (request/response shapes, common primitives, pagination) and the **i18n translation layer** (per-language keys and types). Both workspaces import from it, so schema and translation changes propagate to both sides from one place.
 
-> **Upcoming:** the i18n translation layer will be migrated into this package so that translation keys and types are enforced across the stack from one place.
+> **Tip:** run `npm run i18n:parity` (or `i18n:parity:strict`) in this package to verify every locale exposes the same translation keys — the CI parity gate runs the strict variant.
 
-| Command                | Description                        |
-|------------------------|------------------------------------|
-| `npm run build`        | Compile shared package (tsup)      |
-| `npm run build:watch`  | Compile in watch mode              |
-| `npm test`             | Run tests                          |
-| `npm run typecheck`    | Type-check without emitting        |
-| `npm run lint`         | Lint source                        |
-| `npm run format`       | Format source                      |
+| Command                     | Description                          |
+|-----------------------------|--------------------------------------|
+| `npm run build`             | Compile shared package (tsup)        |
+| `npm run build:watch`       | Compile in watch mode                |
+| `npm test`                  | Run tests                            |
+| `npm run test:watch`        | Run tests in watch mode              |
+| `npm run typecheck`         | Type-check without emitting          |
+| `npm run i18n:parity`       | Check locale key parity              |
+| `npm run i18n:parity:strict`| Strict locale key parity (CI gate)   |
+| `npm run lint`              | Lint source                          |
+| `npm run format`            | Format source                        |
+| `npm run format:check`   | Check formatting                  |
 
 ### Server (`/server`)
 
@@ -123,7 +156,6 @@ The `@trek/shared` package is the single source of truth for code shared between
 | `npm run test:unit`        | Run unit tests only                      |
 | `npm run test:integration` | Run integration tests                    |
 | `npm run test:ws`          | Run WebSocket tests                      |
-| `npm run test:parity`      | Run parity tests                         |
 | `npm run test:e2e`         | Run end-to-end tests                     |
 | `npm run test:watch`       | Run tests in watch mode                  |
 | `npm run test:coverage`    | Run tests with coverage report           |
@@ -147,7 +179,7 @@ The `@trek/shared` package is the single source of truth for code shared between
 
 ---
 
-## 7. Commit & Push Your Changes
+## 8. Commit & Push Your Changes
 
 ```bash
 git add .
@@ -160,7 +192,7 @@ git push origin fix/my-changes
 git push origin dev
 ```
 
-Then open a Pull Request from your fork to `mauriceboe/TREK` targeting the `dev` branch. If your PR only modifies files under `wiki/`, it is exempt from branch enforcement and may target any branch.
+Then open a Pull Request from your fork to `liketrek/TREK` targeting the `dev` branch. If your PR only modifies files under `wiki/`, it is exempt from branch enforcement and may target any branch.
 
 ---
 

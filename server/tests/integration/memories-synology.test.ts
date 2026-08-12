@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import type { Application } from 'express';
+import type { INestApplication } from '@nestjs/common';
 
 // ── Hoisted DB mock ──────────────────────────────────────────────────────────
 
@@ -38,6 +39,10 @@ vi.mock('../../src/config', () => ({
   JWT_SECRET: 'test-jwt-secret-for-trek-testing-only',
   ENCRYPTION_KEY: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2',
   updateJwtSecret: () => {},
+  SESSION_DURATION: '24h',
+  SESSION_DURATION_MS: 86400000,
+  SESSION_DURATION_SECONDS: 86400,
+  DEFAULT_LANGUAGE: 'en',
 }));
 vi.mock('../../src/websocket', () => ({ broadcast: vi.fn(), broadcastToUser: vi.fn() }));
 
@@ -187,34 +192,39 @@ vi.mock('../../src/utils/ssrfGuard', async () => {
       }
     }),
     safeFetch: vi.fn().mockImplementation(makeFakeSynologyFetch),
+    __fakeSynologyFetch: makeFakeSynologyFetch,
   };
 });
 
-import { createApp } from '../../src/app';
+import { buildApp } from '../../src/bootstrap';
 import { createTables } from '../../src/db/schema';
 import { runMigrations } from '../../src/db/migrations';
-import { resetTestDb } from '../helpers/test-db';
+import { resetTestDb, resetRateLimits } from '../helpers/test-db';
 import { createUser, createTrip, addTripMember, addTripPhoto, setSynologyCredentials } from '../helpers/factories';
 import { authCookie } from '../helpers/auth';
-import { loginAttempts, mfaAttempts } from '../../src/routes/auth';
 import { safeFetch } from '../../src/utils/ssrfGuard';
 
-const app: Application = createApp();
+let nestApp: INestApplication;
+let app: Application;
 
 const SYNO = '/api/integrations/memories/synologyphotos';
 
-beforeAll(() => {
+beforeAll(async () => {
   createTables(testDb);
   runMigrations(testDb);
+  nestApp = await buildApp();
+  app = nestApp.getHttpAdapter().getInstance();
 });
 
 beforeEach(() => {
   resetTestDb(testDb);
-  loginAttempts.clear();
-  mfaAttempts.clear();
+  resetRateLimits(nestApp);
 });
 
-afterAll(() => testDb.close());
+afterAll(async () => {
+  await nestApp.close();
+  testDb.close();
+});
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -1238,5 +1248,86 @@ describe('trek_photos orphan cleanup (SYNO-091)', () => {
     const id2 = getOrCreateTrekPhoto('synologyphotos', 'asset-readd-test', user.id, secondPass);
     const row = testDb.prepare('SELECT passphrase FROM trek_photos WHERE id = ?').get(id2) as { passphrase: string };
     expect(decrypt_api_key(row.passphrase)).toBe(secondPass);
+  });
+});
+
+// ── Skip-SSL forwarding on image-byte fetches (#1611) ─────────────────────────
+
+describe('Synology skip-SSL forwarding to image fetches (#1611)', () => {
+  // Earlier tests queue mock*Once responses on safeFetch that are not always
+  // fully consumed — reset to the shared fake so they can't leak in here.
+  beforeEach(async () => {
+    const guard = await import('../../src/utils/ssrfGuard') as any;
+    vi.mocked(safeFetch).mockReset();
+    vi.mocked(safeFetch).mockImplementation(guard.__fakeSynologyFetch);
+  });
+
+  // Unique asset id per run — the thumbnail disk cache keys on
+  // provider:asset:kind:owner and would otherwise serve a stale entry from a
+  // previous run instead of hitting safeFetch.
+  let assetSeq = 0;
+  const uniqueAssetId = () => `${Date.now()}${++assetSeq}_test1611`;
+
+  function createSynologyTrekPhoto(skipSsl: 0 | 1) {
+    const { user } = createUser(testDb);
+    setSynologyCredentials(testDb, user.id, 'https://synology.example.com', 'admin', 'pass');
+    testDb.prepare('UPDATE users SET synology_skip_ssl = ? WHERE id = ?').run(skipSsl, user.id);
+    const assetId = uniqueAssetId();
+    const insert = testDb.prepare(
+      'INSERT INTO trek_photos (provider, asset_id, owner_id) VALUES (?, ?, ?)'
+    ).run('synologyphotos', assetId, user.id);
+    return { user, trekPhotoId: Number(insert.lastInsertRowid) };
+  }
+
+  function thumbnailFetchCalls() {
+    return vi.mocked(safeFetch).mock.calls.filter(call => String(call[0]).includes('SYNO.Foto.Thumbnail'));
+  }
+
+  it('SYNO-100 — thumbnail fetch passes rejectUnauthorized: false when skip-SSL is enabled', async () => {
+    const { user, trekPhotoId } = createSynologyTrekPhoto(1);
+    vi.mocked(safeFetch).mockClear();
+
+    const res = await request(app)
+      .get(`/api/photos/${trekPhotoId}/thumbnail`)
+      .set('Cookie', authCookie(user.id));
+
+    expect(res.status).toBe(200);
+    const calls = thumbnailFetchCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[2]).toMatchObject({ rejectUnauthorized: false });
+    }
+  });
+
+  it('SYNO-101 — original fetch passes rejectUnauthorized: false when skip-SSL is enabled', async () => {
+    const { user, trekPhotoId } = createSynologyTrekPhoto(1);
+    vi.mocked(safeFetch).mockClear();
+
+    const res = await request(app)
+      .get(`/api/photos/${trekPhotoId}/original`)
+      .set('Cookie', authCookie(user.id));
+
+    expect(res.status).toBe(200);
+    const calls = thumbnailFetchCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[2]).toMatchObject({ rejectUnauthorized: false });
+    }
+  });
+
+  it('SYNO-102 — image fetches verify TLS when skip-SSL is disabled', async () => {
+    const { user, trekPhotoId } = createSynologyTrekPhoto(0);
+    vi.mocked(safeFetch).mockClear();
+
+    const res = await request(app)
+      .get(`/api/photos/${trekPhotoId}/thumbnail`)
+      .set('Cookie', authCookie(user.id));
+
+    expect(res.status).toBe(200);
+    const calls = thumbnailFetchCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[2]?.rejectUnauthorized ?? true).toBe(true);
+    }
   });
 });

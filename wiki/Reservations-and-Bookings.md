@@ -76,6 +76,61 @@ Click **Add** (or the + button) in the Reservations panel. Fill in the form:
 
 <!-- TODO: screenshot: Create Reservation modal -->
 
+## Import from booking confirmation
+
+TREK can parse booking confirmation emails, PDFs, and pass files and create reservations automatically using [KDE Itinerary](https://apps.kde.org/itinerary/).
+
+### Supported formats
+
+| Format | Extension |
+|--------|-----------|
+| Booking confirmation email | `.eml` |
+| PDF ticket or confirmation | `.pdf` |
+| Apple Wallet pass | `.pkpass` |
+| HTML confirmation page | `.html`, `.htm` |
+| Plain-text email | `.txt` |
+
+Up to 5 files, 10 MB each, per import.
+
+### How to import
+
+1. Open the **Reservations** tab.
+2. Click the **Import** (download) button in the toolbar — the button is only shown when the extractor is available on your server.
+3. Drag and drop your files onto the upload area, or click to browse.
+4. TREK parses each file and shows a **preview list** of the detected reservations with type, title, dates, endpoints, and confirmation number.
+5. Deselect any items you do not want to import by clicking the × on their card.
+6. Click **Confirm** to create the selected reservations.
+
+All created reservations appear immediately in the panel and are broadcast to all connected trip members in real time.
+
+### What gets created automatically
+
+- **Hotels** — a reservation *and* a linked accommodation row in the day plan (check-in/check-out dates are read from the confirmation).
+- **Hotels / Restaurants / Events** — the venue is auto-created as a place with coordinates when the extractor returns location data.
+- **All types** — a budget entry is created if the Budget addon is enabled and a price is present.
+
+### When the button is not visible
+
+The Import button is hidden when the `kitinerary-extractor` binary is not available. The binary ships inside the official TREK Docker image. If you run TREK from source, install the `libkitinerary-bin` package (Debian trixie / Ubuntu 25.04+) or set `KITINERARY_EXTRACTOR_PATH` to the binary's full path. See [Environment-Variables](Environment-Variables).
+
+### Needs review flag
+
+Items that the extractor could only partially parse are flagged **Needs review** — an amber badge on the card. Review these reservations after import and fill in any missing fields manually.
+
+### AI fallback for hard-to-read files
+
+KDE Itinerary only recognises structured tickets. For confirmations it can't read — plain-text emails, unusual PDF layouts, vendors it doesn't know — TREK can optionally hand the file to an AI model instead. The optional **AI Parsing** addon runs only for the files Itinerary returns nothing for, parses them in the background, and flags every result for review before you save it. It works with a self-hosted local model, so booking data need not leave your server. See **[AI-Booking-Import](AI-Booking-Import)**.
+
+## Import from AirTrail
+
+With the **AirTrail** integration addon enabled and your instance connected under **Settings → Integrations**, the reservations toolbar shows an **AirTrail** button. It lists the flights from your AirTrail account — flights inside the trip dates come pre-selected — and imports each one as a flight reservation that stays in sync with AirTrail both ways.
+
+### Connecting flights (layovers)
+
+When selected flights form a connection — each leg departs from the airport the previous one landed at, onward within 24 hours — the picker groups them and offers to **import them as one flight with a layover**. The offer is on by default; untick it to keep separate bookings. A joined booking keeps each leg's own airline, flight number, times and seat, the connection airport becomes a layover **stop** on the route, and each leg files into its own day in the planner. Since a stop is not a destination, the layover country no longer shows up as visited in Atlas.
+
+AirTrail itself has no multi-leg flights, so a joined booking is imported **without live sync** (it shows the *Not synced* badge). Its source flights stay recognised — the picker will not offer them for import again. The same applies when you add a stop to a synced single flight by hand: the booking detaches from AirTrail instead of syncing a shape AirTrail cannot represent.
+
 ## Editing and deleting
 
 Each card has a pencil icon to open the edit form and a trash icon to delete. Deleting requires confirmation in a dialog before the record is removed.

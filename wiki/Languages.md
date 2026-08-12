@@ -1,6 +1,6 @@
 # Languages
 
-TREK ships with translations for 15 languages. You can change your language at any time without logging out.
+TREK ships with translations for 20 languages. You can change your language at any time without logging out.
 
 ## Supported languages
 
@@ -19,8 +19,13 @@ TREK ships with translations for 15 languages. You can change your language at a
 | `zh` | 简体中文 |
 | `zh-TW` | 繁體中文 |
 | `it` | Italiano |
+| `tr` | Türkçe |
 | `ar` | العربية |
 | `id` | Bahasa Indonesia |
+| `ja` | 日本語 |
+| `ko` | 한국어 |
+| `uk` | Українська |
+| `gr` | Ελληνικά |
 
 ## RTL support
 
@@ -30,7 +35,7 @@ Arabic (`ar`) uses a right-to-left layout. All other languages use left-to-right
 
 TREK resolves the display language in this order:
 
-1. **User preference** — the language saved to your account (set in Settings → Display).
+1. **User preference** — the language saved to your account (set in Settings → General).
 2. **Browser language** — `navigator.languages` (and `navigator.language`) reported by your browser.
 3. **Server default** — the `DEFAULT_LANGUAGE` environment variable set by the admin.
 4. **Fallback** — English (`en`).
@@ -38,7 +43,7 @@ TREK resolves the display language in this order:
 ## Where the language picker appears
 
 - **Login / Register page** — before you are signed in.
-- **Settings → Display** — after you are signed in. See [Display-Settings](Display-Settings).
+- **Settings → General** — after you are signed in. See [Display-Settings](Display-Settings).
 - **Public share pages** — trip share links.
 - **Public journey pages** — public-facing journey views.
 

@@ -235,7 +235,7 @@ describe('PlaceInspector', () => {
   });
 
   it('FE-PLANNER-INSPECTOR-017: "Remove from day" button appears when place IS assigned to selectedDay', () => {
-    const assignmentInDay = [{ id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
+    const assignmentInDay = [{ id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
     render(
       <PlaceInspector
         {...defaultProps}
@@ -250,7 +250,7 @@ describe('PlaceInspector', () => {
   it('FE-PLANNER-INSPECTOR-018: clicking remove calls onRemoveAssignment with dayId and assignmentId', async () => {
     const user = userEvent.setup();
     const onRemoveAssignment = vi.fn();
-    const assignmentInDay = [{ id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
+    const assignmentInDay = [{ id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
     render(
       <PlaceInspector
         {...defaultProps}
@@ -259,8 +259,8 @@ describe('PlaceInspector', () => {
         onRemoveAssignment={onRemoveAssignment}
       />
     );
-    // Find the remove button — it has "Remove" text (sm:hidden span)
-    const removeBtn = screen.getByText('Remove').closest('button')!;
+    // Find the remove button — it carries the "Remove from Day" label
+    const removeBtn = screen.getByText('Remove from Day').closest('button')!;
     await user.click(removeBtn);
     // Component calls onRemoveAssignment(selectedDayId, assignmentInDay.id)
     expect(onRemoveAssignment).toHaveBeenCalledWith(1, 99);
@@ -406,7 +406,7 @@ describe('PlaceInspector', () => {
 
   it('FE-PLANNER-INSPECTOR-030: linked reservation shown when selectedAssignmentId has a reservation', () => {
     const reservation = buildReservation({ title: 'Museum Ticket', status: 'confirmed', assignment_id: 99 } as any);
-    const assignmentInDay = [{ id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
+    const assignmentInDay = [{ id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
     render(
       <PlaceInspector
         {...defaultProps}
@@ -423,7 +423,7 @@ describe('PlaceInspector', () => {
 
   it('FE-PLANNER-INSPECTOR-031: participants section shown when tripMembers > 1 and selectedAssignmentId is set', () => {
     const members = [buildUser({ id: 1 }), buildUser({ id: 2 })];
-    const assignmentInDay = [{ id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
+    const assignmentInDay = [{ id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null }];
     render(
       <PlaceInspector
         {...defaultProps}
@@ -443,7 +443,24 @@ describe('PlaceInspector', () => {
   it('FE-PLANNER-INSPECTOR-032: price chip shown when place.price > 0', () => {
     const p = buildPlace({ id: 300, price: 15, currency: 'EUR' } as any);
     render(<PlaceInspector {...defaultProps} place={p} />);
-    expect(screen.getByText(/15 EUR/)).toBeTruthy();
+    // formatMoney renders in the currency's home convention (de-DE for EUR).
+    expect(screen.getByText(/15,00/)).toBeTruthy();
+  });
+
+  it('FE-PLANNER-INSPECTOR-032b: price chip formats in the place currency with a neutral icon (#1561)', () => {
+    const p = buildPlace({ id: 300, price: 15, currency: 'USD' } as any);
+    render(<PlaceInspector {...defaultProps} place={p} />);
+    expect(screen.getByText('$15.00')).toBeTruthy();
+    // The chip icon must be currency-neutral, not the euro glyph.
+    expect(document.querySelector('.lucide-euro')).toBeNull();
+    expect(document.querySelector('.lucide-banknote')).not.toBeNull();
+  });
+
+  it('FE-PLANNER-INSPECTOR-032c: a currency-less price falls back to the trip currency (#1561)', () => {
+    seedStore(useTripStore, { trip: buildTrip({ id: 1, currency: 'NOK' }) } as any);
+    const p = buildPlace({ id: 300, price: 250, currency: null } as any);
+    render(<PlaceInspector {...defaultProps} place={p} />);
+    expect(screen.getByText(/250,00\s?kr|kr\s?250,00/)).toBeTruthy();
   });
 
   // ── Phone number ───────────────────────────────────────────────────────────
@@ -534,8 +551,8 @@ describe('PlaceInspector', () => {
     const member2 = buildUser({ id: 11, username: 'bob' });
     const members = [member1, member2];
     const assignmentInDay = [{
-      id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null,
-      participants: [{ user_id: 10 }],
+      id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null,
+      participants: [{ user_id: 10, username: 'alice' }],
     }];
     render(
       <PlaceInspector
@@ -618,6 +635,22 @@ describe('PlaceInspector', () => {
     expect(mapsBtn).toBeTruthy();
   });
 
+  it('FE-PLANNER-INSPECTOR-043b: Google Maps action uses google_ftid over coordinates', async () => {
+    const user = userEvent.setup();
+    const mapsUrl = "https://www.google.com/maps/place/?q=St.%20Jacobs%20Farmers'%20Market&ftid=0x882bf179e806d471:0x8591dde29c821a93";
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<PlaceInspector {...defaultProps} place={buildPlace({
+      name: "St. Jacobs Farmers' Market",
+      lat: 43.5118527,
+      lng: -80.5542617,
+      google_ftid: '0x882bf179e806d471:0x8591dde29c821a93',
+    })} />);
+    const mapsBtn = screen.getAllByRole('button').find(btn => btn.textContent?.includes('Google Maps'))!;
+    await user.click(mapsBtn);
+    expect(openSpy).toHaveBeenCalledWith(mapsUrl, '_blank');
+    openSpy.mockRestore();
+  });
+
   // ── No files section when no upload handler and no files ──────────────────
 
   it('FE-PLANNER-INSPECTOR-044: files section hidden when no files and no onFileUpload', () => {
@@ -637,7 +670,7 @@ describe('PlaceInspector', () => {
         tripMembers={[member]}
         selectedDayId={1}
         selectedAssignmentId={99}
-        assignments={{ '1': [{ id: 99, place: { id: place.id }, day_id: 1, place_id: place.id, order_index: 0, notes: null }] }}
+        assignments={{ '1': [{ id: 99, place, day_id: 1, place_id: place.id, order_index: 0, notes: null }] }}
       />
     );
     // "solo" username might be visible from other parts but participants box should not render
@@ -647,5 +680,42 @@ describe('PlaceInspector', () => {
     expect(screen.queryByText('Participants')).toBeNull();
   });
 
-});
+  // ── Scroll / overflow (issue #1195) ──────────────────────────────────────
 
+  it('FE-PLANNER-INSPECTOR-046: content area is a bounded flex scroll region', () => {
+    const longText = 'Lorem ipsum dolor sit amet. '.repeat(200);
+    const p = buildPlace({ id: 200, description: longText, notes: longText } as any);
+    render(<PlaceInspector {...defaultProps} place={p} />);
+    const scroll = screen.getByTestId('inspector-scroll') as HTMLElement;
+    expect(scroll.style.overflowY).toBe('auto');
+    expect(scroll.style.minHeight).toBe('0px');
+    // flex must allow the region to shrink/grow within the capped card
+    expect(scroll.style.flex).not.toBe('');
+    expect(scroll.style.flex).not.toBe('0 0 auto');
+  });
+
+  it('FE-PLANNER-INSPECTOR-047: long unbroken description wraps instead of clipping horizontally', () => {
+    const longWord = 'https://example.com/' + 'a'.repeat(300);
+    const p = buildPlace({ id: 201, description: longWord } as any);
+    const { container } = render(<PlaceInspector {...defaultProps} place={p} />);
+    const descDiv = container.querySelector('.collab-note-md') as HTMLElement;
+    expect(descDiv).toBeTruthy();
+    expect(descDiv.style.overflowWrap).toBe('anywhere');
+    expect(descDiv.style.wordBreak).toBe('break-word');
+  });
+
+  it('FE-PLANNER-INSPECTOR-048: description/notes do not shrink so the card scrolls instead of clipping', () => {
+    const longText = 'Lorem ipsum dolor sit amet. '.repeat(200);
+    const p = buildPlace({ id: 202, description: longText, notes: longText } as any);
+    const { container } = render(<PlaceInspector {...defaultProps} place={p} />);
+    const notes = Array.from(container.querySelectorAll('.collab-note-md')) as HTMLElement[];
+    // Both description and notes containers must keep their natural height
+    // (flex-shrink: 0) — otherwise they compress inside the flex column and
+    // overflow:hidden clips the text with no scroll (issue #1195).
+    expect(notes.length).toBe(2);
+    for (const el of notes) {
+      expect(el.style.flexShrink).toBe('0');
+    }
+  });
+
+});

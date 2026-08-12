@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import http from 'http';
+import net from 'node:net';
+import crypto from 'node:crypto';
 import request from 'supertest';
 import WebSocket from 'ws';
 import { broadcastToUser, getOnlineUserIds } from '../../src/websocket';
@@ -39,27 +41,35 @@ vi.mock('../../src/config', () => ({
   JWT_SECRET: 'test-jwt-secret-for-trek-testing-only',
   ENCRYPTION_KEY: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2',
   updateJwtSecret: () => {},
+  SESSION_DURATION: '24h',
+  SESSION_DURATION_MS: 86400000,
+  SESSION_DURATION_SECONDS: 86400,
+  DEFAULT_LANGUAGE: 'en',
 }));
 
-import { createApp } from '../../src/app';
+import type { INestApplication } from '@nestjs/common';
+import { buildApp } from '../../src/bootstrap';
 import { createTables } from '../../src/db/schema';
 import { runMigrations } from '../../src/db/migrations';
-import { resetTestDb } from '../helpers/test-db';
+import { resetTestDb, resetRateLimits } from '../helpers/test-db';
 import { createUser, createTrip } from '../helpers/factories';
 import { authCookie } from '../helpers/auth';
-import { loginAttempts, mfaAttempts } from '../../src/routes/auth';
 import { setupWebSocket } from '../../src/websocket';
 import { createEphemeralToken } from '../../src/services/ephemeralTokens';
+import { createWsToken } from '../../src/services/authService';
 
 let server: http.Server;
 let wsUrl: string;
+let nestApp: INestApplication;
 
 beforeAll(async () => {
   createTables(testDb);
   runMigrations(testDb);
 
-  const app = createApp();
-  server = http.createServer(app);
+  // Real WebSocket against the unified NestJS app (Express is gone). buildApp owns
+  // the same composition production uses; we attach the real ws server to it.
+  nestApp = await buildApp();
+  server = http.createServer(nestApp.getHttpAdapter().getInstance());
   setupWebSocket(server);
 
   await new Promise<void>(resolve => server.listen(0, resolve));
@@ -71,13 +81,13 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) =>
     server.close(err => err ? reject(err) : resolve())
   );
+  await nestApp.close();
   testDb.close();
 });
 
 beforeEach(() => {
   resetTestDb(testDb);
-  loginAttempts.clear();
-  mfaAttempts.clear();
+  resetRateLimits(nestApp);
 });
 
 /** Buffered WebSocket wrapper that never drops messages. */
@@ -425,6 +435,51 @@ describe('WS auth edge cases', () => {
       client.close();
     }
   });
+
+  it('WS-027 — ws-token minted before a password change is rejected (session gate)', async () => {
+    // createWsToken stamps the user's current password_version (0) into the token.
+    const { user } = createUser(testDb);
+    const result = createWsToken(user.id);
+    const token = result.token!;
+
+    // Simulate a password reset bumping the version AFTER the token was issued.
+    testDb.prepare('UPDATE users SET password_version = password_version + 1 WHERE id = ?').run(user.id);
+
+    const closeCode = await new Promise<number>((resolve) => {
+      const ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
+      ws.once('close', (code) => resolve(code));
+      ws.once('error', () => resolve(4001));
+    });
+    expect(closeCode).toBe(4001);
+  });
+
+  it('WS-028 — ws-token whose password_version still matches connects successfully', async () => {
+    const { user } = createUser(testDb);
+    // Bump the version first, THEN mint — the token captures the current pv.
+    testDb.prepare('UPDATE users SET password_version = 3 WHERE id = ?').run(user.id);
+    const result = createWsToken(user.id);
+    const client = await connectWs(result.token!);
+    try {
+      const msg = await client.next();
+      expect(msg.type).toBe('welcome');
+    } finally {
+      client.close();
+    }
+  });
+
+  it('WS-029 — legacy token without a pv is rejected once the user resets their password', async () => {
+    // Tokens minted via createEphemeralToken carry no pv (treated as version 0).
+    const { user } = createUser(testDb);
+    const token = createEphemeralToken(user.id, 'ws')!;
+    testDb.prepare('UPDATE users SET password_version = 1 WHERE id = ?').run(user.id);
+
+    const closeCode = await new Promise<number>((resolve) => {
+      const ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
+      ws.once('close', (code) => resolve(code));
+      ws.once('error', () => resolve(4001));
+    });
+    expect(closeCode).toBe(4001);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -523,6 +578,54 @@ describe('WS message processing edge cases', () => {
     expect(errors).toHaveLength(0);
 
     rawWs.close();
+  });
+
+  it('WS-015d — a close frame with a reserved status code does not crash the server (#1576)', async () => {
+    // The `ws` client cannot send an invalid close code, so craft the frame over a raw
+    // socket. Reserved code 1006 makes ws emit an 'error' event on the socket; with no
+    // listener attached in setupWebSocket, Node rethrows it as an uncaughtException and the
+    // process dies in production. In-process under vitest that surfaces as an uncaught
+    // WS_ERR_INVALID_CLOSE_CODE, so capture uncaughtException for the duration and assert
+    // none fired — then confirm the server is still serving.
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error): void => { uncaught.push(err); };
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      const port = (server.address() as { port: number }).port;
+      await new Promise<void>((resolve, reject) => {
+        const key = crypto.randomBytes(16).toString('base64');
+        const sock = net.connect(port, '127.0.0.1');
+        sock.on('error', reject);
+        sock.write(
+          `GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\n` +
+          `Connection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`
+        );
+        sock.once('data', (buf) => {
+          if (!buf.toString('latin1').includes('101 Switching Protocols')) return reject(new Error('no upgrade'));
+          const mask = crypto.randomBytes(4);
+          const payload = Buffer.alloc(2);
+          payload.writeUInt16BE(1006, 0); // reserved — MUST NOT appear in a close frame (RFC 6455)
+          const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
+          sock.write(Buffer.concat([Buffer.from([0x88, 0x82]), mask, masked])); // FIN|close, MASK|len2
+          setTimeout(() => { sock.destroy(); resolve(); }, 200);
+        });
+      });
+
+      expect(uncaught.map(e => (e as { code?: string }).code)).not.toContain('WS_ERR_INVALID_CLOSE_CODE');
+
+      // And the server is still serving: a fresh connection still gets a welcome.
+      const { user } = createUser(testDb);
+      const token = createEphemeralToken(user.id, 'ws')!;
+      const client = await connectWs(token);
+      try {
+        expect((await client.next()).type).toBe('welcome');
+      } finally {
+        client.close();
+      }
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
   });
 
   it('WS-016 — rate-limit window resets: after limit hit, next window accepts messages again', async () => {
